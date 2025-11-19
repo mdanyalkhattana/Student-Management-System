@@ -25,6 +25,11 @@ from fastapi.templating import Jinja2Templates
 import uuid
 from utils.auth_utils import get_current_user, TokenData
 from config.config import settings
+from models.role import Role
+from models.menu_model import Menu
+from models.menu_permission import MenuPermission
+import json
+
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -37,7 +42,7 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
         )
-
+     
     # Hash password
     hashed_pw = hash_password(user.password)
 
@@ -45,7 +50,10 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
     new_user = User(
         name=user.name,
         email=user.email,
-        password=hashed_pw
+        password=hashed_pw,
+        role_id = user.role_id
+
+         
     )
     db.add(new_user)
     db.commit()
@@ -77,16 +85,16 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
 @router.post("/login", response_model=dict)
 def login_user(request: LoginRequest, db: Session = Depends(get_db)):
     """
-    1️⃣ Check if user exists.
-    2️⃣ Verify user is verified.
-    3️⃣ Check if already logged in (active session).
-    4️⃣ Validate password using Argon2.
-    5️⃣ Create JWT access token.
-    6️⃣ Save new session in DB.
-    7️⃣ Return JSON response.
+    Login API:
+    1. Validate user
+    2. Validate password
+    3. Create JWT token
+    4. Save session
+    5. Fetch role, menu, permissions
+    6. Return structured response
     """
 
-    # Step 1: Find user by email
+    # Step 1 — Check if user exists
     user = db.query(User).filter(User.email == request.email).first()
     if not user:
         raise HTTPException(
@@ -94,50 +102,110 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
             detail={"status": "error", "message": "Invalid email or password"}
         )
 
-    # Step 2: Check if verified
+    # Step 2 — Check if verified
     if not user.is_verified:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"status": "error", "message": "User not verified yet"}
         )
 
-    # Step 3: Check active session
+    # Step 3 — Check active session
     existing_session = db.query(UserSession).filter(
-        UserSession.user_id == user.id, UserSession.is_active == True
+        UserSession.user_id == user.id,
+        UserSession.is_active == True
     ).first()
+
     if existing_session:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"status": "error", "message": "Session already exists"}
         )
 
-    # Step 4: Verify password
+    # Step 4 — Verify password
     if not verify_password(request.password, user.password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"status": "error", "message": "Invalid email or password"}
         )
 
-    # Step 5: Create JWT token
+    # Step 5 — Create JWT token
     access_token = create_access_token(data={"sub": str(user.id)})
 
-    # Step 6: Store session
-    new_session = UserSession(user_id=user.id, token=access_token, is_active=True)
+    # Step 6 — Create new session
+    new_session = UserSession(
+        user_id=user.id,
+        token=access_token,
+        is_active=True
+    )
     db.add(new_session)
     db.commit()
     db.refresh(new_session)
 
-    # Step 7: Return JSON success response
+    ########### FETCH ROLE + MENU + PERMISSIONS ###########
+
+    # 🔵 Step 7.1 — Fetch Role
+    role = db.query(Role).filter(Role.id == user.role_id).first()
+    if not role:
+        raise HTTPException(
+            status_code=404,
+            detail={"status": "error", "message": "Role not found"}
+        )
+
+    # 🔵 Step 7.2 — Fetch Menu assigned to Role
+    menu = None
+    if role.menu_id:
+        menu = (
+            db.query(Menu)
+            .filter(Menu.id == role.menu_id, Menu.status == True)
+            .first()
+        )
+
+    if not menu:
+        raise HTTPException(
+            status_code=404,
+            detail={"status": "error", "message": "Menu not assigned to this role"}
+        )
+
+    # 🔵 Step 7.3 — Fetch menu permissions
+    menu_permission = (
+        db.query(MenuPermission)
+        .filter(MenuPermission.menu_id == menu.id)
+        .first()
+    )
+
+    if not menu_permission:
+        raise HTTPException(
+            status_code=404,
+            detail={"status": "error", "message": "Menu permissions not found"}
+        )
+
+    # Parse JSON safely
+    try:
+        permissions = json.loads(menu_permission.permission_objects)
+    except:
+        permissions = []
+
+    ########### FINAL RESPONSE ###########
+
     return {
         "status": "success",
         "message": "Login successful",
-        "data": {
-            "user_id": user.id,
-            "email": user.email,
-            "access_token": access_token
-        }
+        "access_token": access_token,
+        "user_id": user.id,
+        "role": {
+            "role_id": role.id,
+            "role_name": role.name
+        },
+        "menu": {
+            "menu_id": menu.id,
+            "menu_name": menu.name,
+            "slug": menu.slug,
+            "parent_id": menu.parent_id
+        },
+        "permissions": permissions
     }
 
+    
 @router.post("/refresh")
 def refresh_token(request: TokenRefreshRequest, db: Session = Depends(get_db)):
     payload = verify_token(request.refresh_token)
