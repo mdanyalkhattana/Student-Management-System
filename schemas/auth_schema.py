@@ -39,6 +39,7 @@ class UserCreate(BaseModel):
     name: str
     email: EmailStr
     password: Annotated[str, constr(min_length=6)]
+    role_id: Optional[int] = None
 
 # Response schema (hide password)
 class UserResponse(BaseModel):
@@ -46,9 +47,21 @@ class UserResponse(BaseModel):
     name: str
     email: EmailStr
     is_verified: bool
+    role_id: Optional[int] = None
 
     class Config:
         orm_mode = True
 
 class VerifyEmailRequest(BaseModel):
     token: str
+#  for the CRUD api schmemasclass UserCreate(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    password: Optional[str] = None
+    role_id: Optional[int] = None
