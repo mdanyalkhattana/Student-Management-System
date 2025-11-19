@@ -2,8 +2,9 @@ from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from config.config import settings
-from routes import auth_routes
+from routes import auth_routes,menu_routes,user,role
 from database import Base, engine
+
  
 
 # from routes import auth_routes, verify_routes
@@ -35,7 +36,9 @@ app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
 Base.metadata.create_all(bind=engine)
 
 app.include_router(auth_routes.router)
- 
+app.include_router(menu_routes.router)
+app.include_router(user.router)
+app.include_router(role.router) 
 # app.include_router(google_auth_routes.router)
 
 # app.include_router(auth_routes.router)
